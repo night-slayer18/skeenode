@@ -125,3 +125,28 @@ func (e *Execution) BeforeCreate(tx *gorm.DB) (err error) {
 	}
 	return
 }
+
+// DependencyType defines the relationship strength between jobs.
+type DependencyType string
+
+const (
+	DependencyTypeHard        DependencyType = "HARD"        // Child waits for parent success
+	DependencyTypeSoft        DependencyType = "SOFT"        // Child waits for parent completion (any status)
+	DependencyTypeConditional DependencyType = "CONDITIONAL" // Child runs based on parent outcome
+)
+
+// Dependency represents a relationship between two jobs where the child
+// depends on the parent's execution. Used for DAG-based job scheduling.
+type Dependency struct {
+	ParentJobID     uuid.UUID      `json:"parent_job_id" gorm:"type:uuid;primaryKey"`
+	ChildJobID      uuid.UUID      `json:"child_job_id" gorm:"type:uuid;primaryKey"`
+	Type            DependencyType `json:"type" gorm:"type:varchar(20);not null;default:'HARD'"`
+	ConfidenceScore float64        `json:"confidence_score" gorm:"default:1.0"` // 1.0 for manual, <1.0 for ML-detected
+	IsAutoDetected  bool           `json:"is_auto_detected" gorm:"default:false"`
+	CreatedAt       time.Time      `json:"created_at"`
+
+	// Foreign key relationships
+	ParentJob *Job `json:"-" gorm:"foreignKey:ParentJobID;constraint:OnDelete:CASCADE"`
+	ChildJob  *Job `json:"-" gorm:"foreignKey:ChildJobID;constraint:OnDelete:CASCADE"`
+}
+

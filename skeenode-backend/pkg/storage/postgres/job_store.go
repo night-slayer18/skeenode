@@ -42,7 +42,7 @@ func NewPostgresStore(connString string) (*PostgresStore, error) {
 
 	// "Super Ultra Pro" Feature: Auto-Migration
 	// No raw SQL CREATE strings. GORM handles schema diffing.
-	err = db.AutoMigrate(&models.Job{}, &models.Execution{})
+	err = db.AutoMigrate(&models.Job{}, &models.Execution{}, &models.Dependency{})
 	if err != nil {
 		return nil, fmt.Errorf("schema migration failed: %w", err)
 	}
@@ -79,6 +79,23 @@ func (s *PostgresStore) GetJob(ctx context.Context, id uuid.UUID) (*models.Job, 
 		return nil, result.Error
 	}
 	return &job, nil
+}
+
+// ListAllJobs returns all active jobs with pagination.
+func (s *PostgresStore) ListAllJobs(ctx context.Context, limit, offset int) ([]models.Job, error) {
+	var jobs []models.Job
+	
+	result := s.db.WithContext(ctx).
+		Where("status != ?", models.JobStatusArchived).
+		Order("created_at desc").
+		Limit(limit).
+		Offset(offset).
+		Find(&jobs)
+		
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list jobs: %w", result.Error)
+	}
+	return jobs, nil
 }
 
 // ListDueJobs finds jobs that need to be run using fluent API.
@@ -124,13 +141,14 @@ func (s *PostgresStore) CreateExecution(ctx context.Context, exec *models.Execut
 	return nil
 }
 
-// UpdateRunState marks an execution as running.
-func (s *PostgresStore) UpdateRunState(ctx context.Context, id uuid.UUID, startedAt time.Time) error {
+// UpdateRunState marks an execution as running with the assigned node.
+func (s *PostgresStore) UpdateRunState(ctx context.Context, id uuid.UUID, nodeID string, startedAt time.Time) error {
 	result := s.db.WithContext(ctx).
 		Model(&models.Execution{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
 			"status":     models.ExecutionRunning,
+			"node_id":    nodeID,
 			"started_at": startedAt,
 		})
 
@@ -195,4 +213,53 @@ func (s *PostgresStore) ListRecentFailures(ctx context.Context, since time.Time,
 		return nil, fmt.Errorf("failed to list recent failures: %w", result.Error)
 	}
 	return execs, nil
+}
+
+// --- DependencyStore Implementation ---
+
+// CreateDependency adds a new job dependency relationship.
+func (s *PostgresStore) CreateDependency(ctx context.Context, dep *models.Dependency) error {
+	result := s.db.WithContext(ctx).Create(dep)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create dependency: %w", result.Error)
+	}
+	return nil
+}
+
+// GetDependencies returns all dependencies where the given job is the child.
+func (s *PostgresStore) GetDependencies(ctx context.Context, childJobID uuid.UUID) ([]models.Dependency, error) {
+	var deps []models.Dependency
+	result := s.db.WithContext(ctx).
+		Where("child_job_id = ?", childJobID).
+		Find(&deps)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get dependencies: %w", result.Error)
+	}
+	return deps, nil
+}
+
+// GetDependents returns all jobs that depend on the given job (children).
+func (s *PostgresStore) GetDependents(ctx context.Context, parentJobID uuid.UUID) ([]models.Dependency, error) {
+	var deps []models.Dependency
+	result := s.db.WithContext(ctx).
+		Where("parent_job_id = ?", parentJobID).
+		Find(&deps)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to get dependents: %w", result.Error)
+	}
+	return deps, nil
+}
+
+// DeleteDependency removes a specific dependency relationship.
+func (s *PostgresStore) DeleteDependency(ctx context.Context, parentJobID, childJobID uuid.UUID) error {
+	result := s.db.WithContext(ctx).
+		Where("parent_job_id = ? AND child_job_id = ?", parentJobID, childJobID).
+		Delete(&models.Dependency{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete dependency: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
 }

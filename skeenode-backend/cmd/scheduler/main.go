@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	config "skeenode/configs"
 	"skeenode/pkg/coordination/etcd"
@@ -19,7 +21,13 @@ func main() {
 	cfg := config.LoadConfig()
 	log.Println("[Skeenode Scheduler] Starting up...")
 	
-	ctx := context.Background()
+	// Create cancellable context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	// Setup signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	
 	// Initialize Postgres Store (GORM)
 	connStr := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC", 
@@ -62,10 +70,29 @@ func main() {
 	}
 	log.Println("Leader: I am the captain now.")
 	
-	// Create and Run Scheduler Core
+	// Create Scheduler Core
 	core := scheduler.NewCore(cfg, store, store, queue, etcdCoord)
 	log.Println("[Skeenode Scheduler] Starting main work loop...")
 	
-	// Blocking call
-	core.Run(ctx, election)
+	// Run scheduler in goroutine so we can handle signals
+	go func() {
+		core.Run(ctx, election)
+	}()
+	
+	// Wait for shutdown signal
+	sig := <-sigChan
+	log.Printf("[Skeenode Scheduler] Received signal %v, initiating graceful shutdown...", sig)
+	
+	// Cancel context to stop scheduler loop
+	cancel()
+	
+	// Resign leadership so another scheduler can take over quickly
+	if err := election.Resign(context.Background()); err != nil {
+		log.Printf("[Skeenode Scheduler] Warning: failed to resign leadership: %v", err)
+	} else {
+		log.Println("[Skeenode Scheduler] Leadership resigned.")
+	}
+	
+	log.Println("[Skeenode Scheduler] Shutdown complete.")
 }
+

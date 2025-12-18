@@ -14,6 +14,7 @@ import (
 	config "skeenode/configs"
 	"skeenode/pkg/coordination"
 	"skeenode/pkg/executor/runner"
+	"skeenode/pkg/metrics"
 	"skeenode/pkg/models"
 	"skeenode/pkg/storage"
 )
@@ -112,7 +113,7 @@ func (e *Executor) consumeOne(ctx context.Context) {
 	log.Printf("[Executor] 🚀 Received Job %s (Exec: %s) Cmd: %s", exec.JobID, exec.ID, exec.JobCommand)
 
 	// 1. Report RUNNING state
-	if err := e.execStore.UpdateRunState(ctx, exec.ID, time.Now()); err != nil {
+	if err := e.execStore.UpdateRunState(ctx, exec.ID, e.ID, time.Now()); err != nil {
 		log.Printf("[Executor] Failed to report run state: %v", err)
 		// We continue anyway, but ideally we might retry or fail
 	}
@@ -134,6 +135,10 @@ func (e *Executor) consumeOne(ctx context.Context) {
 	if result.ExitCode != 0 {
 		status = models.ExecutionFailed
 	}
+	
+	// Record metrics
+	metrics.RecordExecution("", string(models.JobTypeShell), string(status), result.Duration.Seconds())
+	metrics.ExecutorJobsRunning.Dec()
 	
 	// Logs Handling (Simple MVP: Save to /tmp/skeenode-logs)
 	// In production, upload to S3/BlobStore
@@ -160,5 +165,6 @@ func (e *Executor) RegisterHeartbeat(ctx context.Context) error {
 		return fmt.Errorf("failed to register node: %w", err)
 	}
 	log.Printf("[Executor] Heartbeat sent (ID: %s)", e.ID)
+	metrics.HeartbeatsSent.Inc()
 	return nil
 }

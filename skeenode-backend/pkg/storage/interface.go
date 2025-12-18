@@ -22,6 +22,9 @@ type JobStore interface {
 	
 	// GetJob retrieves a job by ID.
 	GetJob(ctx context.Context, id uuid.UUID) (*models.Job, error)
+
+	// ListAllJobs returns all active jobs with pagination.
+	ListAllJobs(ctx context.Context, limit, offset int) ([]models.Job, error)
 	
 	// ListDueJobs finds jobs that need to be scheduled (NextRunAt <= Now).
 	ListDueJobs(ctx context.Context, limit int) ([]models.Job, error)
@@ -49,8 +52,8 @@ type Queue interface {
 type ExecutionStore interface {
 	CreateExecution(ctx context.Context, exec *models.Execution) error
 	
-	// UpdateRunState marks an execution as running.
-	UpdateRunState(ctx context.Context, id uuid.UUID, startedAt time.Time) error
+	// UpdateRunState marks an execution as running with the executing node.
+	UpdateRunState(ctx context.Context, id uuid.UUID, nodeID string, startedAt time.Time) error
 	
 	// UpdateResult marks an execution as finished.
 	UpdateResult(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int, outputURI string) error
@@ -60,4 +63,19 @@ type ExecutionStore interface {
 	
 	// ListRecentFailures returns executions that failed since a given time.
 	ListRecentFailures(ctx context.Context, since time.Time, limit int) ([]models.Execution, error)
+}
+
+// DependencyStore defines the data access layer for Job dependencies.
+type DependencyStore interface {
+	// CreateDependency adds a new job dependency relationship.
+	CreateDependency(ctx context.Context, dep *models.Dependency) error
+
+	// GetDependencies returns all dependencies where the given job is the child.
+	GetDependencies(ctx context.Context, childJobID uuid.UUID) ([]models.Dependency, error)
+
+	// GetDependents returns all jobs that depend on the given job (children).
+	GetDependents(ctx context.Context, parentJobID uuid.UUID) ([]models.Dependency, error)
+
+	// DeleteDependency removes a specific dependency relationship.
+	DeleteDependency(ctx context.Context, parentJobID, childJobID uuid.UUID) error
 }

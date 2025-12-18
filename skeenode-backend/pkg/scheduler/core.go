@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
+	"math/rand/v2"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +13,7 @@ import (
 
 	config "skeenode/configs"
 	"skeenode/pkg/coordination"
+	"skeenode/pkg/metrics"
 	"skeenode/pkg/models"
 	"skeenode/pkg/storage"
 )
@@ -39,6 +42,36 @@ func NewCore(cfg *config.Config, store storage.JobStore, execStore storage.Execu
 		parser:      cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
 		interval:    interval,
 	}
+}
+
+// calculateBackoff computes the exponential backoff delay with jitter for retry attempts.
+// Uses the job's RetryPolicy settings, with sensible defaults if not configured.
+func calculateBackoff(attempt int, policy models.RetryPolicy) time.Duration {
+	// Parse initial interval (default: 5 seconds)
+	initial, err := time.ParseDuration(policy.InitialInterval)
+	if err != nil || initial == 0 {
+		initial = 5 * time.Second
+	}
+
+	// Parse max interval (default: 5 minutes)
+	maxInterval, err := time.ParseDuration(policy.MaxInterval)
+	if err != nil || maxInterval == 0 {
+		maxInterval = 5 * time.Minute
+	}
+
+	// Calculate exponential backoff: initial * 2^attempt
+	backoff := float64(initial) * math.Pow(2, float64(attempt))
+	
+	// Cap at max interval
+	if backoff > float64(maxInterval) {
+		backoff = float64(maxInterval)
+	}
+
+	// Add jitter (±20%) to prevent thundering herd
+	jitter := (rand.Float64() - 0.5) * 0.4 * backoff
+	backoff += jitter
+
+	return time.Duration(backoff)
 }
 
 // Run starts the main scheduler loop.
@@ -105,6 +138,8 @@ func (c *Core) Reconcile(ctx context.Context) error {
 	
 	if count > 0 {
 		log.Printf("[Scheduler] 💀 Reaped %d orphaned executions from dead nodes", count)
+		// Record metric
+		metrics.OrphansReaped.Add(float64(count))
 	}
 
 	// C. Smart Retries
@@ -145,9 +180,9 @@ func (c *Core) RetryFailures(ctx context.Context) error {
 			continue // Exhausted retries
 		}
 
-		// Calculate Backoff (Exponential: 2^attempt * initial)
-		// MVP: Fixed 10s backoff
-		nextRun := time.Now().Add(10 * time.Second)
+		// Calculate Backoff with jitter using the job's retry policy
+		backoff := calculateBackoff(failure.Attempt, job.RetryPolicy)
+		nextRun := time.Now().Add(backoff)
 
 		// Create Retry Execution
 		retryID := uuid.New()
@@ -237,6 +272,10 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 		}
 		
 		log.Printf("[Scheduler] Dispatched Job %s (Exec: %s). Next run: %s", job.Name, execID, nextRun)
+		
+		// Record metrics
+		lag := time.Since(*job.NextRunAt).Seconds()
+		metrics.RecordDispatch(lag)
 	}
 
 	return nil
