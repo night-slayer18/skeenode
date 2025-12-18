@@ -1,0 +1,148 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"skeenode/pkg/models"
+	"skeenode/pkg/storage"
+)
+
+type PostgresStore struct {
+	db *gorm.DB
+}
+
+// NewPostgresStore initializes GORM connection and AutoMigrates schemas.
+func NewPostgresStore(connString string) (*PostgresStore, error) {
+	// Use GORM configuration for "Pro" logging and performance
+	config := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+		PrepareStmt: true, // Cache prepared statements for performance
+	}
+
+	db, err := gorm.Open(postgres.Open(connString), config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Optimize Connection Pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetMaxOpenConns(50)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	// "Super Ultra Pro" Feature: Auto-Migration
+	// No raw SQL CREATE strings. GORM handles schema diffing.
+	err = db.AutoMigrate(&models.Job{}, &models.Execution{})
+	if err != nil {
+		return nil, fmt.Errorf("schema migration failed: %w", err)
+	}
+
+	return &PostgresStore{db: db}, nil
+}
+
+func (s *PostgresStore) Close() error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+// CreateJob persists a new job using GORM.
+func (s *PostgresStore) CreateJob(ctx context.Context, job *models.Job) error {
+	result := s.db.WithContext(ctx).Create(job)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create job: %w", result.Error)
+	}
+	return nil
+}
+
+// GetJob retrieves a job by ID.
+func (s *PostgresStore) GetJob(ctx context.Context, id uuid.UUID) (*models.Job, error) {
+	var job models.Job
+	result := s.db.WithContext(ctx).First(&job, "id = ?", id)
+	
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, storage.ErrNotFound
+		}
+		return nil, result.Error
+	}
+	return &job, nil
+}
+
+// ListDueJobs finds jobs that need to be run using fluent API.
+func (s *PostgresStore) ListDueJobs(ctx context.Context, limit int) ([]models.Job, error) {
+	var jobs []models.Job
+	
+	// SELECT * FROM jobs WHERE status = 'ACTIVE' AND next_run_at <= NOW() ORDER BY next_run_at ASC LIMIT ?
+	result := s.db.WithContext(ctx).
+		Where("status = ?", models.JobStatusActive).
+		Where("next_run_at <= ?", time.Now()).
+		Order("next_run_at asc").
+		Limit(limit).
+		Find(&jobs)
+		
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list due jobs: %w", result.Error)
+	}
+	return jobs, nil
+}
+
+// UpdateNextRun updates the scheduling timestamp.
+func (s *PostgresStore) UpdateNextRun(ctx context.Context, id uuid.UUID, nextRun time.Time) error {
+	result := s.db.WithContext(ctx).
+		Model(&models.Job{}).
+		Where("id = ?", id).
+		Update("next_run_at", nextRun)
+		
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
+}
+
+// CreateExecution records a new execution run.
+func (s *PostgresStore) CreateExecution(ctx context.Context, exec *models.Execution) error {
+	result := s.db.WithContext(ctx).Create(exec)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create execution: %w", result.Error)
+	}
+	return nil
+}
+
+// UpdateStatus updates the status and exit code of an execution.
+func (s *PostgresStore) UpdateStatus(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int) error {
+	result := s.db.WithContext(ctx).
+		Model(&models.Execution{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":    status,
+			"exit_code": exitCode,
+			"completed_at": func() *time.Time {
+				if status == models.ExecutionSuccess || status == models.ExecutionFailed {
+					now := time.Now()
+					return &now
+				}
+				return nil
+			}(),
+		})
+
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}

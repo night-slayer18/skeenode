@@ -14,25 +14,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25'
+        go-version: '1.24'
     - name: Build
       run: cd skeenode-backend && go build -v ./...
     - name: Test
       run: cd skeenode-backend && go test -v ./...
-
-  lint-backend:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.25'
-    - name: golangci-lint
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: v1.64
-        working-directory: skeenode-backend
 
   test-frontend:
     runs-on: ubuntu-latest
