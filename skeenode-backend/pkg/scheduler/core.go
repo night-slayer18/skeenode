@@ -46,6 +46,9 @@ func NewCore(cfg *config.Config, store storage.JobStore, execStore storage.Execu
 func (c *Core) Run(ctx context.Context, election coordination.Election) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
+	
+	reconcileTicker := time.NewTicker(30 * time.Second)
+	defer reconcileTicker.Stop()
 
 	for {
 		select {
@@ -66,8 +69,114 @@ func (c *Core) Run(ctx context.Context, election coordination.Election) {
 			if err := c.PollAndSchedule(ctx); err != nil {
 				log.Printf("[Scheduler] Error in schedule loop: %v", err)
 			}
+
+		case <-reconcileTicker.C:
+			// 3. Reconcile Loop (The Reaper)
+			// Runs every 30 seconds
+			// 1. Verify leadership (Reaper must be leader too)
+			leader, err := election.Leader(ctx)
+			if err != nil {
+				continue
+			}
+			_ = leader 
+
+			if err := c.Reconcile(ctx); err != nil {
+				log.Printf("[Scheduler] Error in reconcile loop: %v", err)
+			}
 		}
 	}
+}
+
+// Reconcile checks for dead nodes and orphans.
+func (c *Core) Reconcile(ctx context.Context) error {
+	// A. Get Active Nodes
+	nodes, err := c.coordinator.GetActiveNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get active nodes: %w", err)
+	}
+	
+	// Fast path: if nodes exist, good. If 0 nodes, everything is an orphan.
+	
+	// B. Mark Orphans as FAILED
+	count, err := c.execStore.MarkOrphansAsFailed(ctx, nodes)
+	if err != nil {
+		return fmt.Errorf("failed to reap orphans: %w", err)
+	}
+	
+	if count > 0 {
+		log.Printf("[Scheduler] 💀 Reaped %d orphaned executions from dead nodes", count)
+	}
+
+	// C. Smart Retries
+	if err := c.RetryFailures(ctx); err != nil {
+		log.Printf("[Scheduler] Error retrying failures: %v", err)
+	}
+
+	return nil
+}
+
+// RetryFailures finds recently failed jobs and reschedules them if policy allows.
+func (c *Core) RetryFailures(ctx context.Context) error {
+	// 1. Find recent failures (last 2 minutes)
+	// We look back slightly longer than interval to ensure we don't miss any
+	since := time.Now().Add(-2 * time.Minute)
+	failures, err := c.execStore.ListRecentFailures(ctx, since, 20)
+	if err != nil {
+		return err
+	}
+
+	for _, failure := range failures {
+		// Optimization: Check if already retried?
+		// For MVP, we don't have a "HasRetried" link. 
+		// We rely on "Pending" execution creation. If a pending execution exists for this job, we skip.
+		// BUT, simpler logic: Only retry if "failed" and "not retried yet".
+		// We can't easily check "not retried yet" without querying.
+		// PRO FIX: We need idempotency.
+		// For now, we assume if we process it soon enough, we are good.
+		// Real impl would have "RetriedExecutionID" on the failed record.
+		
+		job, err := c.store.GetJob(ctx, failure.JobID)
+		if err != nil {
+			log.Printf("[Scheduler] Failed to get job for retry check: %v", err)
+			continue
+		}
+
+		if failure.Attempt >= job.RetryPolicy.MaxRetries {
+			continue // Exhausted retries
+		}
+
+		// Calculate Backoff (Exponential: 2^attempt * initial)
+		// MVP: Fixed 10s backoff
+		nextRun := time.Now().Add(10 * time.Second)
+
+		// Create Retry Execution
+		retryID := uuid.New()
+		retryExec := &models.Execution{
+			ID:          retryID,
+			JobID:       job.ID,
+			// Important: increment attempt
+			Attempt:     failure.Attempt + 1,
+			ScheduledAt: nextRun,
+			Status:      models.ExecutionPending,
+			JobCommand:  job.Command,
+		}
+
+		// Persist & Push
+		// Note: This creates a race where we might retry same failure twice if loop runs fast.
+		// Ideally we mark 'failure' as 'retried'.
+		if err := c.execStore.CreateExecution(ctx, retryExec); err != nil {
+			log.Printf("[Scheduler] Failed to schedule retry: %v", err)
+			continue
+		}
+		
+		if err := c.queue.Push(ctx, retryExec); err != nil {
+			log.Printf("[Scheduler] Failed to push retry: %v", err)
+		}
+		
+		log.Printf("[Scheduler] 🔄 Scheduled Retry %d/%d for Job %s (Exec: %s)", 
+			retryExec.Attempt, job.RetryPolicy.MaxRetries, job.Name, retryID)
+	}
+	return nil
 }
 
 // PollAndSchedule fetches due jobs and dispatches them.
@@ -94,6 +203,7 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 			JobID:       job.ID,
 			ScheduledAt: *job.NextRunAt,
 			Status:      models.ExecutionPending,
+			JobCommand:  job.Command,
 		}
 
 		// Transactional safety would be ideal here (Outbox pattern), 

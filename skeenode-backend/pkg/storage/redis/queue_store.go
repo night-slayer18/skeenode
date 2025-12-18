@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"skeenode/pkg/models"
 
@@ -60,4 +61,57 @@ func (r *RedisQueue) Push(ctx context.Context, exec *models.Execution) error {
 	return nil
 }
 
-// TODO: Implement Pop/ConsumerGroup logic for Executor
+// EnsureGroup creates the consumer group if it doesn't exist.
+func (r *RedisQueue) EnsureGroup(ctx context.Context, group string) error {
+	err := r.client.XGroupCreateMkStream(ctx, StreamKeyPending, group, "$").Err()
+	if err != nil {
+		if err.Error() == "BUSYGROUP Consumer Group name already exists" {
+			return nil
+		}
+		return fmt.Errorf("failed to create consumer group: %w", err)
+	}
+	return nil
+}
+
+// Pop retrieves a job from the queue for a specific consumer group.
+func (r *RedisQueue) Pop(ctx context.Context, group string, consumer string) (string, *models.Execution, error) {
+	// Block for 2 seconds waiting for new messages
+	streams, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{StreamKeyPending, ">"},
+		Count:    1,
+		Block:    2 * time.Second,
+	}).Result()
+
+	if err != nil {
+		if err == redis.Nil {
+			return "", nil, nil // Timeout, no jobs
+		}
+		return "", nil, fmt.Errorf("failed to read from stream: %w", err)
+	}
+
+	if len(streams) == 0 || len(streams[0].Messages) == 0 {
+		return "", nil, nil
+	}
+
+	msg := streams[0].Messages[0]
+	msgID := msg.ID
+	
+	payloadStr, ok := msg.Values["payload"].(string)
+	if !ok {
+		return msgID, nil, fmt.Errorf("invalid payload format")
+	}
+
+	var exec models.Execution
+	if err := json.Unmarshal([]byte(payloadStr), &exec); err != nil {
+		return msgID, nil, fmt.Errorf("failed to unmarshal execution: %w", err)
+	}
+
+	return msgID, &exec, nil
+}
+
+// Ack acknowledges a job execution as processed.
+func (r *RedisQueue) Ack(ctx context.Context, group string, msgID string) error {
+	return r.client.XAck(ctx, StreamKeyPending, group, msgID).Err()
+}

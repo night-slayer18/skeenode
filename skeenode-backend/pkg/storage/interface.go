@@ -34,10 +34,30 @@ type JobStore interface {
 type Queue interface {
 	// Push adds a job to the pending queue.
 	Push(ctx context.Context, execution *models.Execution) error
+
+	// Pop retrieves a job from the queue for a specific consumer group.
+	Pop(ctx context.Context, group string, consumer string) (string, *models.Execution, error)
+
+	// Ack acknowledges a job execution as processed.
+	Ack(ctx context.Context, group string, msgID string) error
+
+	// EnsureGroup ensures the consumer group exists.
+	EnsureGroup(ctx context.Context, group string) error
 }
 
 // ExecutionStore defines the data access layer for Execution history.
 type ExecutionStore interface {
 	CreateExecution(ctx context.Context, exec *models.Execution) error
-	UpdateStatus(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int) error
+	
+	// UpdateRunState marks an execution as running.
+	UpdateRunState(ctx context.Context, id uuid.UUID, startedAt time.Time) error
+	
+	// UpdateResult marks an execution as finished.
+	UpdateResult(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int, outputURI string) error
+
+	// MarkOrphansAsFailed updates executions stuck in RUNNING state on dead nodes.
+	MarkOrphansAsFailed(ctx context.Context, activeNodeIDs []string) (int64, error)
+	
+	// ListRecentFailures returns executions that failed since a given time.
+	ListRecentFailures(ctx context.Context, since time.Time, limit int) ([]models.Execution, error)
 }

@@ -9,6 +9,12 @@ type Coordinator interface {
 	// NewElection creates a new election instance for a given campaign name.
 	NewElection(name string) Election
 	
+	// RegisterNode registers a node with a heartbeat TTL.
+	RegisterNode(ctx context.Context, nodeID string, ttl int) error
+	
+	// GetActiveNodes returns a list of all currently active node IDs.
+	GetActiveNodes(ctx context.Context) ([]string, error)
+	
 	// Close terminates the coordinator connection.
 	Close() error
 }

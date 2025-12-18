@@ -111,9 +111,12 @@ type Execution struct {
 	StartedAt     *time.Time      `json:"started_at"`
 	CompletedAt   *time.Time      `json:"completed_at"`
 	Status        ExecutionStatus `json:"status" gorm:"type:varchar(20);default:'PENDING'"`
+	Attempt       int             `json:"attempt" gorm:"default:1"`
 	ExitCode      int             `json:"exit_code"`
 	OutputURI     string          `json:"output_uri"`
-	// ResourceUsage map[string]any is trickier in GORM without a wrapper, simplifying for now or use JSONB wrapper like above
+	
+	// Transient field for transport to Executor (not stored in DB execution table)
+	JobCommand    string          `json:"command" gorm:"-"` 
 }
 
 func (e *Execution) BeforeCreate(tx *gorm.DB) (err error) {

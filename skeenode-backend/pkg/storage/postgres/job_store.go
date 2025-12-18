@@ -124,25 +124,75 @@ func (s *PostgresStore) CreateExecution(ctx context.Context, exec *models.Execut
 	return nil
 }
 
-// UpdateStatus updates the status and exit code of an execution.
-func (s *PostgresStore) UpdateStatus(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int) error {
+// UpdateRunState marks an execution as running.
+func (s *PostgresStore) UpdateRunState(ctx context.Context, id uuid.UUID, startedAt time.Time) error {
 	result := s.db.WithContext(ctx).
 		Model(&models.Execution{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"status":    status,
-			"exit_code": exitCode,
-			"completed_at": func() *time.Time {
-				if status == models.ExecutionSuccess || status == models.ExecutionFailed {
-					now := time.Now()
-					return &now
-				}
-				return nil
-			}(),
+			"status":     models.ExecutionRunning,
+			"started_at": startedAt,
 		})
 
 	if result.Error != nil {
-		return result.Error
+		return fmt.Errorf("failed to update run state: %w", result.Error)
 	}
 	return nil
+}
+
+// UpdateResult marks an execution as finished.
+func (s *PostgresStore) UpdateResult(ctx context.Context, id uuid.UUID, status models.ExecutionStatus, exitCode int, outputURI string) error {
+	now := time.Now()
+	result := s.db.WithContext(ctx).
+		Model(&models.Execution{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":       status,
+			"exit_code":    exitCode,
+			"output_uri":   outputURI,
+			"completed_at": now,
+		})
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to update result: %w", result.Error)
+	}
+	return nil
+}
+
+// MarkOrphansAsFailed updates executions stuck in RUNNING state on dead nodes.
+func (s *PostgresStore) MarkOrphansAsFailed(ctx context.Context, activeNodeIDs []string) (int64, error) {
+	// If no nodes are active, ALL running jobs are orphans.
+	// However, we must be careful not to mark jobs that just started before the node registered (race condition).
+	// But usually, node registers BEFORE taking jobs.
+	
+	query := s.db.WithContext(ctx).
+		Model(&models.Execution{}).
+		Where("status = ?", models.ExecutionRunning)
+
+	if len(activeNodeIDs) > 0 {
+		query = query.Where("node_id NOT IN ?", activeNodeIDs)
+	}
+	
+	result := query.Updates(map[string]interface{}{
+		"status":       models.ExecutionFailed,
+		"exit_code":    -1,
+		"completed_at": time.Now(),
+	})
+	return result.RowsAffected, result.Error
+}
+
+// ListRecentFailures returns executions that failed since a given time.
+func (s *PostgresStore) ListRecentFailures(ctx context.Context, since time.Time, limit int) ([]models.Execution, error) {
+	var execs []models.Execution
+	result := s.db.WithContext(ctx).
+		Where("status = ?", models.ExecutionFailed).
+		Where("completed_at >= ?", since).
+		Order("completed_at desc").
+		Limit(limit).
+		Find(&execs)
+		
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to list recent failures: %w", result.Error)
+	}
+	return execs, nil
 }

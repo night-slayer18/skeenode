@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	config "skeenode/configs"
 	"skeenode/pkg/coordination/etcd"
 	"skeenode/pkg/scheduler"
 	"skeenode/pkg/storage/postgres"
 	"skeenode/pkg/storage/redis"
+
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -47,7 +50,10 @@ func main() {
 	log.Println("[Skeenode Scheduler] Connected to Etcd.")
 
 	// Start Leader Election
-	hostname := "scheduler-node-1" // TODO: Use real hostname or UUID
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "scheduler-" + uuid.New().String()
+	}
 	election := etcdCoord.NewElection("skeenode-leader")
 	
 	log.Printf("Follower: requesting leadership as %s...", hostname)

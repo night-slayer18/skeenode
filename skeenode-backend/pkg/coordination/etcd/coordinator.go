@@ -72,3 +72,56 @@ func (e *EtcdElection) Leader(ctx context.Context) (string, error) {
 	}
 	return string(resp.Kvs[0].Value), nil
 }
+
+func (c *EtcdCoordinator) RegisterNode(ctx context.Context, nodeID string, ttl int) error {
+	// Create a lease
+	resp, err := c.client.Grant(ctx, int64(ttl))
+	if err != nil {
+		return fmt.Errorf("failed to grant lease: %w", err)
+	}
+
+	key := fmt.Sprintf("/nodes/%s", nodeID)
+	// Put key with lease
+	_, err = c.client.Put(ctx, key, "ONLINE", clientv3.WithLease(resp.ID))
+	if err != nil {
+		return fmt.Errorf("failed to put node key: %w", err)
+	}
+	
+	// KeepAlive to refresh the lease automatically
+	// Note: For a strict heartbeat loop called periodically, we might not need KeepAlive
+	// if the caller calls RegisterNode repeatedly.
+	// But using KeepAlive is cleaner/more robust for a long-running process.
+	// However, to match the "Heartbeat Loop" in Executor.Start, we can just purely rely on repeated Puts/KeepAlives.
+	// Let's use KeepAliveOnce for the simple repeated call pattern or start a KeepAlive channel.
+	
+	// Implementation choice: Since Executor.Start has a ticker, we can simple use Put with Lease repeatedly,
+	// OR use a long-lived KeepAlive.
+	// Let's use the robust KeepAlive channel method here attached to the session if possible, 
+	// but simpler for now matches the "Heartbeat" concept:
+	// The ticker in Executor calls this. So we just need to refresh the lease or re-put.
+	
+	// Actually, simpler approach for "Heartbeat Loop" architecture:
+	// The loop simply calls this function every X seconds.
+	// So we just Put with a short lease.
+	return nil
+}
+
+func (c *EtcdCoordinator) GetActiveNodes(ctx context.Context) ([]string, error) {
+	// List all keys under /nodes/
+	resp, err := c.client.Get(ctx, "/nodes/", clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	var nodes []string
+	for _, kv := range resp.Kvs {
+		// Key format: /nodes/{node_id}
+		// Extract node_id
+		key := string(kv.Key)
+		// Assuming prefix length is 7 ("/nodes/")
+		if len(key) > 7 {
+			nodes = append(nodes, key[7:])
+		}
+	}
+	return nodes, nil
+}
