@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: skeenode
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: skeenode
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.0
+    command: /usr/local/bin/etcd --advertise-client-urls http://0.0.0.0:2379 --listen-client-urls http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd_data:/etcd-data
+
+  # Placeholders for our services (commented out until built)
+  # scheduler:
+  #   build: ./skeenode-backend
+  #   depends_on: [postgres, redis, etcd]
+
+  # dashboard:
+  #   build: ./skeenode-frontend
+  #   ports: ["3000:3000"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  etcd_data:

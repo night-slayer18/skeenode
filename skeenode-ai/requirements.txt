@@ -1,0 +1,9 @@
+fastapi==0.125.0
+uvicorn==0.34.0
+pandas==2.2.3
+numpy==2.1.0
+scikit-learn==1.6.0
+xgboost==3.1.2
+prometheus-client==0.21.0
+python-dotenv==1.0.1
+pytest==8.3.4
