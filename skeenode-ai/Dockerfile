@@ -23,6 +23,11 @@ FROM python:3.12-slim AS production
 
 WORKDIR /app
 
+# Install runtime dependencies required by the compose healthcheck (curl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 

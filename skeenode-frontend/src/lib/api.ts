@@ -79,7 +79,10 @@ export interface DashboardStats {
 // API Functions
 export const api = {
   // Jobs
-  getJobs: (token?: string) => fetchApi<Job[]>('/jobs', { token }),
+  getJobs: async (token?: string) => {
+    const res = await fetchApi<{ jobs: Job[]; count?: number }>('/jobs', { token })
+    return res.jobs || []
+  },
   getJob: (id: string, token?: string) => fetchApi<Job>(`/jobs/${id}`, { token }),
   createJob: (data: CreateJobInput, token?: string) =>
     fetchApi<Job>('/jobs', { method: 'POST', body: JSON.stringify(data), token }),

@@ -50,7 +50,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             registry.register_model(
                 model=model,
                 metrics={"bootstrap": True, "accuracy": 0.0},
-                features=["day_of_week", "hour", "job_type_len"],
+                features=[
+                    "day_of_week",
+                    "hour",
+                    "job_type_len",
+                    "execution_count",
+                    "avg_duration_ms",
+                    "failure_rate",
+                ],
                 model_type="xgboost",
                 activate=True,
             )
@@ -74,6 +81,10 @@ def train_bootstrap_model() -> XGBClassifier:
         "day_of_week": np.random.randint(0, 7, n_samples),
         "hour": np.random.randint(0, 24, n_samples),
         "job_type_len": np.random.randint(4, 10, n_samples),
+        # Additional operational features expected by PredictionService
+        "execution_count": np.random.randint(0, 200, n_samples),
+        "avg_duration_ms": np.random.exponential(scale=1000.0, size=n_samples),
+        "failure_rate": np.random.random(n_samples),
     })
     
     # Simulate failure patterns
