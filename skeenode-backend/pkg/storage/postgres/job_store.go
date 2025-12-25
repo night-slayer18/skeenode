@@ -40,8 +40,7 @@ func NewPostgresStore(connString string) (*PostgresStore, error) {
 	sqlDB.SetMaxOpenConns(50)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	// "Super Ultra Pro" Feature: Auto-Migration
-	// No raw SQL CREATE strings. GORM handles schema diffing.
+
 	err = db.AutoMigrate(&models.Job{}, &models.Execution{}, &models.Dependency{})
 	if err != nil {
 		return nil, fmt.Errorf("schema migration failed: %w", err)

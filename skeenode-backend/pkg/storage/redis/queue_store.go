@@ -19,14 +19,52 @@ type RedisQueue struct {
 	client *redis.Client
 }
 
-// NewRedisQueue initializes a new Redis client.
+// RedisQueueConfig holds Redis connection configuration
+type RedisQueueConfig struct {
+	Addr         string
+	PoolSize     int
+	MinIdleConns int
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	PoolTimeout  time.Duration
+}
+
+// DefaultRedisQueueConfig returns enterprise-grade defaults
+func DefaultRedisQueueConfig(addr string) RedisQueueConfig {
+	return RedisQueueConfig{
+		Addr:         addr,
+		PoolSize:     100,
+		MinIdleConns: 10,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolTimeout:  4 * time.Second,
+	}
+}
+
+// NewRedisQueue initializes a new Redis client with default config.
 func NewRedisQueue(addr string) (*RedisQueue, error) {
+	return NewRedisQueueWithConfig(DefaultRedisQueueConfig(addr))
+}
+
+// NewRedisQueueWithConfig initializes a new Redis client with custom config.
+func NewRedisQueueWithConfig(cfg RedisQueueConfig) (*RedisQueue, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr: addr,
+		Addr:         cfg.Addr,
+		PoolSize:     cfg.PoolSize,
+		MinIdleConns: cfg.MinIdleConns,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		PoolTimeout:  cfg.PoolTimeout,
 	})
 
-	// Ping to verify connection
-	if err := client.Ping(context.Background()).Err(); err != nil {
+	// Ping to verify connection with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DialTimeout)
+	defer cancel()
+	
+	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
