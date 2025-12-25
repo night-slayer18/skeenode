@@ -1,0 +1,29 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: skeenode-api-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: skeenode-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: skeenode-scheduler-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: skeenode-scheduler
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: skeenode-executor-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: skeenode-executor
