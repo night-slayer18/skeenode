@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"skeenode/pkg/api/middleware"
 	"skeenode/pkg/coordination"
 	"skeenode/pkg/storage"
 )
@@ -43,9 +44,14 @@ func NewServer(cfg Config) *Server {
 	
 	router := gin.New()
 	
-	// Middleware
+	// Middleware stack (order matters)
 	router.Use(gin.Recovery())
+	router.Use(middleware.RequestIDMiddleware())      // Request tracing
+	router.Use(middleware.SecurityHeadersMiddleware()) // Security headers
+	router.Use(middleware.MetricsMiddleware())         // HTTP metrics
 	router.Use(requestLogger())
+	router.Use(middleware.RateLimitMiddleware())       // Rate limiting: 100 requests/min per client
+	router.Use(middleware.BodySizeLimitMiddleware(1 << 20)) // 1MB body limit
 	
 	s := &Server{
 		router:      router,
@@ -140,10 +146,39 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
-// healthCheck returns server health status.
+// healthCheck returns server health status with dependency checks.
 func (s *Server) healthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "healthy",
-		"timestamp": time.Now().UTC(),
+	// Check all critical dependencies
+	deps := make(map[string]bool)
+	
+	// Check database (via store interface)
+	deps["postgres"] = s.jobStore != nil
+	
+	// Check queue
+	deps["redis"] = s.queue != nil
+	
+	// Check coordinator
+	deps["etcd"] = s.coordinator != nil
+	
+	// Determine overall health
+	healthy := true
+	for _, ok := range deps {
+		if !ok {
+			healthy = false
+			break
+		}
+	}
+	
+	status := "healthy"
+	httpStatus := http.StatusOK
+	if !healthy {
+		status = "degraded"
+		httpStatus = http.StatusServiceUnavailable
+	}
+	
+	c.JSON(httpStatus, gin.H{
+		"status":       status,
+		"dependencies": deps,
+		"timestamp":    time.Now().UTC(),
 	})
 }

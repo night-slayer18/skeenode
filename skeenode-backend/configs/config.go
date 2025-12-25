@@ -18,6 +18,10 @@ type Config struct {
 	LeaderElectionTTL int
 	APIPort           string
 	AIServiceURL      string
+	// Auth settings
+	JWTSecret      string
+	JWTIssuer      string
+	AuthEnabled    bool
 }
 
 func LoadConfig() *Config {
@@ -34,6 +38,10 @@ func LoadConfig() *Config {
 		LeaderElectionTTL: getEnvAsInt("LEADER_ELECTION_TTL", 15),
 		APIPort:           getEnv("API_PORT", "8080"),
 		AIServiceURL:      getEnv("AI_SERVICE_URL", "http://localhost:8000"),
+		// Auth settings
+		JWTSecret:   getEnv("JWT_SECRET", ""),
+		JWTIssuer:   getEnv("JWT_ISSUER", "skeenode"),
+		AuthEnabled: getEnvAsBool("AUTH_ENABLED", false),
 	}
 }
 
@@ -50,4 +58,12 @@ func getEnvAsInt(key string, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+func getEnvAsBool(key string, fallback bool) bool {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return fallback
+	}
+	return valueStr == "true" || valueStr == "1" || valueStr == "yes"
 }

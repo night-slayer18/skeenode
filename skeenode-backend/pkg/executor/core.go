@@ -158,8 +158,7 @@ func (e *Executor) consumeOne(ctx context.Context) {
 	// Record metrics
 	metrics.RecordExecution("", string(models.JobTypeShell), string(status), result.Duration.Seconds())
 	
-	// Logs Handling (Simple MVP: Save to /tmp/skeenode-logs)
-	// In production, upload to S3/BlobStore
+	// Logs Handling - writes to local path (use storage.S3LogStore for S3 in production)
 	logPath := fmt.Sprintf("/tmp/skeenode-%s.log", exec.ID)
 	// Combine logs
 	fullLog := fmt.Sprintf("STDOUT:\n%s\nSTDERR:\n%s", result.Stdout, result.Stderr)
