@@ -12,6 +12,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	config "skeenode/configs"
+	"skeenode/pkg/ai"
 	"skeenode/pkg/coordination"
 	"skeenode/pkg/metrics"
 	"skeenode/pkg/models"
@@ -23,9 +24,10 @@ type Core struct {
 	execStore   storage.ExecutionStore
 	queue       storage.Queue
 	coordinator coordination.Coordinator
+	aiClient    *ai.Client
 	parser      cron.Parser
-	
-	interval    time.Duration
+
+	interval time.Duration
 }
 
 func NewCore(cfg *config.Config, store storage.JobStore, execStore storage.ExecutionStore, queue storage.Queue, coord coordination.Coordinator) *Core {
@@ -39,6 +41,7 @@ func NewCore(cfg *config.Config, store storage.JobStore, execStore storage.Execu
 		execStore:   execStore,
 		queue:       queue,
 		coordinator: coord,
+		aiClient:    ai.NewClient(cfg.AIServiceURL),
 		parser:      cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
 		interval:    interval,
 	}
@@ -231,6 +234,28 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 	now := time.Now()
 
 	for _, job := range jobs {
+		// AI Check: Predict Failure
+		// We only check if there is some history, for simplicity we assume yes or just send what we have.
+		// Construct features (mock features for now)
+		features := map[string]interface{}{
+			"day_of_week": int(now.Weekday()),
+			"hour":        now.Hour(),
+			"job_type":    string(job.Type),
+		}
+
+		// Call AI Service (Best effort, don't block if it fails)
+		prediction, err := c.aiClient.PredictFailure(job.ID.String(), features)
+		if err != nil {
+			log.Printf("[Scheduler] Warning: AI prediction failed: %v", err)
+		} else {
+			if prediction.Decision == "ABORT" {
+				log.Printf("[Scheduler] 🛑 AI blocked execution of job %s (Confidence: %.2f)", job.Name, prediction.Confidence)
+				// Skip this execution, but update next run time so we don't get stuck
+				c.updateNextRun(ctx, &job, now)
+				continue
+			}
+		}
+
 		// B. Dispatch to Queue
 		execID := uuid.New()
 		exec := &models.Execution{
@@ -241,9 +266,9 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 			JobCommand:  job.Command,
 		}
 
-		// Transactional safety would be ideal here (Outbox pattern), 
+		// Transactional safety would be ideal here (Outbox pattern),
 		// but for Week 1 MVP we do: DB Write -> Redis Push
-		
+
 		// 1. Record Execution in DB
 		if err := c.execStore.CreateExecution(ctx, exec); err != nil {
 			log.Printf("[Scheduler] Failed to create execution for job %s: %v", job.ID, err)
@@ -257,21 +282,9 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 			continue
 		}
 
-		// C. Calculate Next Run Time
-		schedule, err := c.parser.Parse(job.Schedule)
-		if err != nil {
-			log.Printf("[Scheduler] Invalid cron schedule for job %s: %v", job.ID, err)
-			continue
-		}
+		c.updateNextRun(ctx, &job, now)
 		
-		nextRun := schedule.Next(now)
-		
-		// D. Update Job (Move to future)
-		if err := c.store.UpdateNextRun(ctx, job.ID, nextRun); err != nil {
-			log.Printf("[Scheduler] Failed to update next run for job %s: %v", job.ID, err)
-		}
-		
-		log.Printf("[Scheduler] Dispatched Job %s (Exec: %s). Next run: %s", job.Name, execID, nextRun)
+		log.Printf("[Scheduler] Dispatched Job %s (Exec: %s).", job.Name, execID)
 		
 		// Record metrics
 		lag := time.Since(*job.NextRunAt).Seconds()
@@ -279,4 +292,21 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (c *Core) updateNextRun(ctx context.Context, job *models.Job, now time.Time) {
+	// C. Calculate Next Run Time
+	schedule, err := c.parser.Parse(job.Schedule)
+	if err != nil {
+		log.Printf("[Scheduler] Invalid cron schedule for job %s: %v", job.ID, err)
+		return
+	}
+
+	nextRun := schedule.Next(now)
+
+	// D. Update Job (Move to future)
+	if err := c.store.UpdateNextRun(ctx, job.ID, nextRun); err != nil {
+		log.Printf("[Scheduler] Failed to update next run for job %s: %v", job.ID, err)
+	}
+	log.Printf("[Scheduler] Updated next run for job %s to %s", job.Name, nextRun)
 }
