@@ -61,7 +61,7 @@ function StatCard({ title, value, icon, trend, color = 'primary' }: StatCardProp
                 </div>
               )}
             </div>
-            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colorClasses[color]} flex items-center justify-center`}>
+            <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${colorClasses[color]} flex items-center justify-center`}>
               {icon}
             </div>
           </div>
