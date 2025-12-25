@@ -15,8 +15,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from .config import settings
-
 logger = logging.getLogger(__name__)
 
 
