@@ -33,6 +33,11 @@ type IntegrationTestSuite struct {
 
 // SetupSuite runs once before all tests
 func (s *IntegrationTestSuite) SetupSuite() {
+	// Skip integration tests if SKIP_INTEGRATION_TESTS is set
+	if os.Getenv("SKIP_INTEGRATION_TESTS") == "true" {
+		s.T().Skip("Skipping integration tests (SKIP_INTEGRATION_TESTS=true)")
+	}
+
 	gin.SetMode(gin.TestMode)
 
 	// Get connection strings from environment or use defaults
@@ -49,7 +54,9 @@ func (s *IntegrationTestSuite) SetupSuite() {
 
 	// Initialize PostgreSQL
 	store, err := postgres.NewPostgresStore(connStr)
-	require.NoError(s.T(), err, "Failed to connect to PostgreSQL")
+	if err != nil {
+		s.T().Skipf("Skipping integration tests: %v", err)
+	}
 	s.store = store
 
 	// Initialize Redis
@@ -58,7 +65,9 @@ func (s *IntegrationTestSuite) SetupSuite() {
 		getEnv("TEST_REDIS_PORT", "6379"),
 	)
 	queue, err := redis.NewRedisQueue(redisAddr)
-	require.NoError(s.T(), err, "Failed to connect to Redis")
+	if err != nil {
+		s.T().Skipf("Skipping integration tests: %v", err)
+	}
 	s.queue = queue
 
 	// Create API server
