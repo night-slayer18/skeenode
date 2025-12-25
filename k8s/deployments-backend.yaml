@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skeenode-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: skeenode-scheduler
+  template:
+    metadata:
+      labels:
+        app: skeenode-scheduler
+    spec:
+      containers:
+      - name: scheduler
+        image: skeenode/backend:latest
+        command: ["/app/scheduler"]
+        envFrom:
+        - configMapRef:
+            name: skeenode-config
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: skeenode-secrets
+              key: db_password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skeenode-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: skeenode-api
+  template:
+    metadata:
+      labels:
+        app: skeenode-api
+    spec:
+      containers:
+      - name: api
+        image: skeenode/backend:latest
+        command: ["/app/api"]
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: skeenode-config
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: skeenode-secrets
+              key: db_password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skeenode-executor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: skeenode-executor
+  template:
+    metadata:
+      labels:
+        app: skeenode-executor
+    spec:
+      containers:
+      - name: executor
+        image: skeenode/backend:latest
+        command: ["/app/executor"]
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        envFrom:
+        - configMapRef:
+            name: skeenode-config
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: skeenode-secrets
+              key: db_password

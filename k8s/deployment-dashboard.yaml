@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skeenode-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: skeenode-dashboard
+  template:
+    metadata:
+      labels:
+        app: skeenode-dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: skeenode/frontend:latest
+        ports:
+        - containerPort: 80

@@ -86,13 +86,22 @@ func (e *Executor) Start(ctx context.Context) {
 	}()
 
 	// Main Work Loop
-	log.Println("[Executor] Waiting for jobs...")
+	log.Printf("[Executor] Waiting for jobs... (Concurrency: %d)", e.TotalCPU)
+
+	// Worker Pool Semaphore
+	sem := make(chan struct{}, e.TotalCPU)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			e.consumeOne(ctx)
+			// Acquire token
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem }() // Release token
+				e.consumeOne(ctx)
+			}()
 		}
 	}
 }
@@ -101,14 +110,24 @@ func (e *Executor) consumeOne(ctx context.Context) {
 	// Pop job (blocks up to 2s)
 	msgID, exec, err := e.queue.Pop(ctx, "skeenode-executors", e.ID)
 	if err != nil {
+		// Only log if it's not a timeout (redis nil)
+		// Assuming Pop returns specific error or nil on timeout
 		log.Printf("[Executor] Error popping job: %v", err)
 		time.Sleep(1 * time.Second) // Backoff
 		return
 	}
 	
 	if exec == nil {
-		return // No job received
+		// No job, sleep briefly to avoid spin loop if queue is empty but semaphore is full
+		// Actually if exec is nil, we should return immediately so the worker is freed
+		// But wait, if we return immediately, the loop will spin acquiring/releasing tokens.
+		// So we should sleep a bit if queue is empty.
+		time.Sleep(1 * time.Second)
+		return
 	}
+
+	metrics.ExecutorJobsRunning.Inc()
+	defer metrics.ExecutorJobsRunning.Dec()
 
 	log.Printf("[Executor] 🚀 Received Job %s (Exec: %s) Cmd: %s", exec.JobID, exec.ID, exec.JobCommand)
 
@@ -138,7 +157,6 @@ func (e *Executor) consumeOne(ctx context.Context) {
 	
 	// Record metrics
 	metrics.RecordExecution("", string(models.JobTypeShell), string(status), result.Duration.Seconds())
-	metrics.ExecutorJobsRunning.Dec()
 	
 	// Logs Handling (Simple MVP: Save to /tmp/skeenode-logs)
 	// In production, upload to S3/BlobStore
