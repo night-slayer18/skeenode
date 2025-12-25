@@ -325,20 +325,3 @@ func (c *Core) updateNextRun(ctx context.Context, job *models.Job, now time.Time
 	}
 	log.Printf("[Scheduler] Updated next run for job %s to %s", job.Name, nextRun)
 }
-
-func (c *Core) updateNextRun(ctx context.Context, job *models.Job, now time.Time) {
-	// C. Calculate Next Run Time
-	schedule, err := c.parser.Parse(job.Schedule)
-	if err != nil {
-		log.Printf("[Scheduler] Invalid cron schedule for job %s: %v", job.ID, err)
-		return
-	}
-
-	nextRun := schedule.Next(now)
-
-	// D. Update Job (Move to future)
-	if err := c.store.UpdateNextRun(ctx, job.ID, nextRun); err != nil {
-		log.Printf("[Scheduler] Failed to update next run for job %s: %v", job.ID, err)
-	}
-	log.Printf("[Scheduler] Updated next run for job %s to %s", job.Name, nextRun)
-}

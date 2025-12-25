@@ -27,34 +27,34 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Assuming API is proxied or CORS enabled
+        const jobsRes = await fetch('/api/jobs');
+        const execsRes = await fetch('/api/executions');
+
+        if (jobsRes.ok) {
+          const jobsData = await jobsRes.json();
+          setJobs(jobsData);
+        }
+        if (execsRes.ok) {
+          const execsData = await execsRes.json();
+          setExecutions(execsData);
+        }
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch data:", err);
+        // Don't show error immediately to avoid flickering on first load if it's just starting up
+        if (loading) setError("Failed to connect to backend");
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, []);
-
-  const fetchData = async () => {
-    try {
-      // Assuming API is proxied or CORS enabled
-      const jobsRes = await fetch('/api/jobs');
-      const execsRes = await fetch('/api/executions');
-
-      if (jobsRes.ok) {
-        const jobsData = await jobsRes.json();
-        setJobs(jobsData);
-      }
-      if (execsRes.ok) {
-        const execsData = await execsRes.json();
-        setExecutions(execsData);
-      }
-      setError(null);
-    } catch (err) {
-      console.error("Failed to fetch data:", err);
-      // Don't show error immediately to avoid flickering on first load if it's just starting up
-      if (loading) setError("Failed to connect to backend");
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [loading]);
 
   const createJob = async () => {
       const name = prompt("Job Name:");
@@ -74,8 +74,12 @@ function App() {
                   owner_id: 'admin'
               })
           });
-          fetchData();
+          // Ideally trigger a refresh here, but fetchData is now inside useEffect.
+          // We can just rely on the interval or reload the page.
+          // For now, let's reload to be simple as fetchData is scoped.
+          window.location.reload();
       } catch (e) {
+          console.error(e);
           alert("Failed to create job");
       }
   };
