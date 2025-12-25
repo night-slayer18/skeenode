@@ -36,6 +36,11 @@ services:
       - "2379:2379"
     volumes:
       - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   api:
     build:
@@ -44,9 +49,18 @@ services:
     command: ["/app/api"]
     environment:
       - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=skeenode
+      - DB_PASS=password
+      - DB_NAME=skeenode
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - ETCD_ENDPOINTS=etcd:2379
       - API_PORT=8080
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - JWT_ISSUER=skeenode
+      - AUTH_ENABLED=true
+      - LOG_LEVEL=info
     ports:
       - "8080:8080"
     depends_on:
@@ -64,7 +78,12 @@ services:
     command: ["/app/scheduler"]
     environment:
       - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=skeenode
+      - DB_PASS=password
+      - DB_NAME=skeenode
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - ETCD_ENDPOINTS=etcd:2379
       - AI_SERVICE_URL=http://ai:8000
     depends_on:
@@ -75,7 +94,7 @@ services:
       etcd:
         condition: service_started
       ai:
-        condition: service_started
+        condition: service_healthy
 
   executor:
     build:
@@ -84,8 +103,16 @@ services:
     command: ["/app/executor"]
     environment:
       - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=skeenode
+      - DB_PASS=password
+      - DB_NAME=skeenode
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - ETCD_ENDPOINTS=etcd:2379
+      - LOG_PATH=/var/log/skeenode
+    volumes:
+      - executor_logs:/var/log/skeenode
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,12 +126,35 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - SERVICE_NAME=skeenode-ai
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - HOST=0.0.0.0
       - PORT=8000
+      - REDIS_URL=redis://redis:6379
+      - MODEL_PATH=/app/models
+      - AB_TESTING_ENABLED=true
+      - PREDICTION_CACHE_ENABLED=true
+      - RATE_LIMIT_ENABLED=true
+      - LOG_LEVEL=INFO
+    volumes:
+      - ai_models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      redis:
+        condition: service_healthy
 
   dashboard:
     build: ./skeenode-frontend
     ports:
       - "3000:80"
+    environment:
+      - VITE_API_URL=http://api:8080
     depends_on:
       - api
 
@@ -112,3 +162,5 @@ volumes:
   postgres_data:
   redis_data:
   etcd_data:
+  executor_logs:
+  ai_models:

@@ -172,7 +172,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-muted-foreground">Choose your preferred color scheme</p>
                 </div>
                 <div className="flex gap-2">
-                  <button className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-accent border-2 border-primary" />
+                  <button className="w-8 h-8 rounded-full bg-linear-to-br from-primary to-accent border-2 border-primary" />
                   <button className="w-8 h-8 rounded-full bg-slate-800 border border-border" />
                   <button className="w-8 h-8 rounded-full bg-white border border-border" />
                 </div>
