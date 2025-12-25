@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 import redis
 
-from .config import settings
-from .model_registry import ModelRegistry, get_registry
-from .schemas import Decision, JobFeatures, PredictionRequest, PredictionResponse
+from ..config import settings
+from ..schemas import Decision, JobFeatures, PredictionRequest, PredictionResponse
+from ..model_registry import ModelRegistry, get_registry
 
 logger = logging.getLogger(__name__)
 
