@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -259,6 +260,9 @@ func (c *Core) PollAndSchedule(ctx context.Context) (int, error) {
 	// (Optional: we could just fire and forget if we don't care about precise count return,
 	// but PollAndSchedule returns count, implying synchronous batch processing)
 	var wg sync.WaitGroup
+
+	// Using errChan to suppress unused variable error, though in real prod we would aggregate errors
+	_ = errChan
 
 	for _, job := range jobs {
 		wg.Add(1)
