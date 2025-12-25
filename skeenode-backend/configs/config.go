@@ -17,6 +17,7 @@ type Config struct {
 	SchedulerInterval string
 	LeaderElectionTTL int
 	APIPort           string
+	AIServiceURL      string
 }
 
 func LoadConfig() *Config {
@@ -32,6 +33,7 @@ func LoadConfig() *Config {
 		SchedulerInterval: getEnv("SCHEDULER_INTERVAL", "10s"),
 		LeaderElectionTTL: getEnvAsInt("LEADER_ELECTION_TTL", 15),
 		APIPort:           getEnv("API_PORT", "8080"),
+		AIServiceURL:      getEnv("AI_SERVICE_URL", "http://localhost:8000"),
 	}
 }
 
