@@ -235,7 +235,8 @@ func (c *Core) RetryFailures(ctx context.Context) error {
 // Returns the number of jobs scheduled.
 func (c *Core) PollAndSchedule(ctx context.Context) (int, error) {
 	// A. Find jobs that are due (NextRunAt <= Now)
-	jobs, err := c.store.ListDueJobs(ctx, 50) // Batch size 50
+	// Scale: Increase batch size to 500 for better throughput
+	jobs, err := c.store.ListDueJobs(ctx, 500)
 	if err != nil {
 		return 0, fmt.Errorf("failed to list due jobs: %w", err)
 	}
@@ -248,63 +249,83 @@ func (c *Core) PollAndSchedule(ctx context.Context) (int, error) {
 
 	now := time.Now()
 
+	// Scale: Parallel Dispatch using Worker Pool
+	// Limit concurrency to avoid overwhelming the database or AI service
+	concurrency := 20
+	sem := make(chan struct{}, concurrency)
+	errChan := make(chan error, len(jobs))
+
+	// WaitGroup to wait for all dispatches in this batch
+	// (Optional: we could just fire and forget if we don't care about precise count return,
+	// but PollAndSchedule returns count, implying synchronous batch processing)
+	var wg sync.WaitGroup
+
 	for _, job := range jobs {
-		// AI Check: Predict Failure
-		// We only check if there is some history, for simplicity we assume yes or just send what we have.
-		// Construct features (mock features for now)
-		features := map[string]interface{}{
-			"day_of_week": int(now.Weekday()),
-			"hour":        now.Hour(),
-			"job_type":    string(job.Type),
-		}
+		wg.Add(1)
+		sem <- struct{}{} // Acquire token
 
-		// Call AI Service (Best effort, don't block if it fails)
-		prediction, err := c.aiClient.PredictFailure(job.ID.String(), features)
-		if err != nil {
-			log.Printf("[Scheduler] Warning: AI prediction failed: %v", err)
-		} else {
-			if prediction.Decision == "ABORT" {
-				log.Printf("[Scheduler] 🛑 AI blocked execution of job %s (Confidence: %.2f)", job.Name, prediction.Confidence)
-				// Skip this execution, but update next run time so we don't get stuck
-				c.updateNextRun(ctx, &job, now)
-				continue
+		go func(j models.Job) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release token
+
+			// AI Check: Predict Failure
+			features := map[string]interface{}{
+				"day_of_week": int(now.Weekday()),
+				"hour":        now.Hour(),
+				"job_type":    string(j.Type),
 			}
-		}
 
-		// B. Dispatch to Queue
-		execID := uuid.New()
-		exec := &models.Execution{
-			ID:          execID,
-			JobID:       job.ID,
-			ScheduledAt: *job.NextRunAt,
-			Status:      models.ExecutionPending,
-			JobCommand:  job.Command,
-		}
+			// Call AI Service (Best effort, don't block if it fails)
+			prediction, err := c.aiClient.PredictFailure(j.ID.String(), features)
+			if err != nil {
+				// Log but proceed? Or fail open?
+				// "Fail Open" is safer for a scheduler (don't stop jobs because AI is down)
+				log.Printf("[Scheduler] Warning: AI prediction failed: %v", err)
+			} else {
+				if prediction.Decision == "ABORT" {
+					log.Printf("[Scheduler] 🛑 AI blocked execution of job %s (Confidence: %.2f)", j.Name, prediction.Confidence)
+					// Skip this execution, but update next run time so we don't get stuck
+					c.updateNextRun(ctx, &j, now)
+					return
+				}
+			}
 
-		// Transactional safety would be ideal here (Outbox pattern),
-		// but for Week 1 MVP we do: DB Write -> Redis Push
+			// B. Dispatch to Queue
+			execID := uuid.New()
+			exec := &models.Execution{
+				ID:          execID,
+				JobID:       j.ID,
+				ScheduledAt: *j.NextRunAt,
+				Status:      models.ExecutionPending,
+				JobCommand:  j.Command,
+			}
 
-		// 1. Record Execution in DB
-		if err := c.execStore.CreateExecution(ctx, exec); err != nil {
-			log.Printf("[Scheduler] Failed to create execution for job %s: %v", job.ID, err)
-			continue
-		}
+			// 1. Record Execution in DB
+			if err := c.execStore.CreateExecution(ctx, exec); err != nil {
+				log.Printf("[Scheduler] Failed to create execution for job %s: %v", j.ID, err)
+				return
+			}
 
-		// 2. Push to Redis Stats
-		if err := c.queue.Push(ctx, exec); err != nil {
-			log.Printf("[Scheduler] Failed to push execution for job %s: %v", job.ID, err)
-			// TODO: Mark execution as FAILED in DB?
-			continue
-		}
+			// 2. Push to Redis Stats
+			if err := c.queue.Push(ctx, exec); err != nil {
+				log.Printf("[Scheduler] Failed to push execution for job %s: %v", j.ID, err)
+				// TODO: Mark execution as FAILED in DB?
+				return
+			}
 
-		c.updateNextRun(ctx, &job, now)
-		
-		log.Printf("[Scheduler] Dispatched Job %s (Exec: %s).", job.Name, execID)
-		
-		// Record metrics
-		lag := time.Since(*job.NextRunAt).Seconds()
-		metrics.RecordDispatch(lag)
+			c.updateNextRun(ctx, &j, now)
+
+			log.Printf("[Scheduler] Dispatched Job %s (Exec: %s).", j.Name, execID)
+
+			// Record metrics
+			lag := time.Since(*j.NextRunAt).Seconds()
+			metrics.RecordDispatch(lag)
+
+		}(job)
 	}
+
+	wg.Wait()
+	close(errChan)
 
 	return len(jobs), nil
 }

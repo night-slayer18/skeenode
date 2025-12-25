@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import './App.css';
 
 interface Job {
@@ -26,35 +26,39 @@ function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Assuming API is proxied or CORS enabled
-        const jobsRes = await fetch('/api/jobs');
-        const execsRes = await fetch('/api/executions');
+  // Defined with useCallback to satisfy linter dependencies
+  const fetchData = useCallback(async () => {
+    try {
+      const jobsRes = await fetch('/api/jobs');
+      const execsRes = await fetch('/api/executions');
 
-        if (jobsRes.ok) {
-          const jobsData = await jobsRes.json();
-          setJobs(jobsData);
-        }
-        if (execsRes.ok) {
-          const execsData = await execsRes.json();
-          setExecutions(execsData);
-        }
-        setError(null);
-      } catch (err) {
-        console.error("Failed to fetch data:", err);
-        // Don't show error immediately to avoid flickering on first load if it's just starting up
-        if (loading) setError("Failed to connect to backend");
-      } finally {
-        setLoading(false);
+      if (jobsRes.ok) {
+        const jobsData = await jobsRes.json();
+        setJobs(jobsData);
       }
-    };
+      if (execsRes.ok) {
+        const execsData = await execsRes.json();
+        setExecutions(execsData);
+      }
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch data:", err);
+      // We only want to show error on initial load or if persistent,
+      // but 'loading' state might be stale if captured.
+      // Ideally we track separate 'isFirstLoad' but 'loading' works if we just check current state setter
+      // or just assume if we have no jobs it's an error.
+      // For simplicity in this refactor, we just set error.
+      if (jobs.length === 0) setError("Failed to connect to backend");
+    } finally {
+      setLoading(false);
+    }
+  }, [jobs.length]); // Minimal dependencies
 
+  useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [loading]);
+  }, [fetchData]);
 
   const createJob = async () => {
       const name = prompt("Job Name:");
@@ -74,10 +78,7 @@ function App() {
                   owner_id: 'admin'
               })
           });
-          // Ideally trigger a refresh here, but fetchData is now inside useEffect.
-          // We can just rely on the interval or reload the page.
-          // For now, let's reload to be simple as fetchData is scoped.
-          window.location.reload();
+          fetchData();
       } catch (e) {
           console.error(e);
           alert("Failed to create job");
