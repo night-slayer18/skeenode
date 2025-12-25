@@ -102,8 +102,22 @@ func (c *Core) Run(ctx context.Context, election coordination.Election) {
 			_ = leader 
 
 			// 2. Poll and Scheduling Logic
-			if err := c.PollAndSchedule(ctx); err != nil {
-				log.Printf("[Scheduler] Error in schedule loop: %v", err)
+			// Drain the queue: keep scheduling until no more jobs are found
+			for {
+				count, err := c.PollAndSchedule(ctx)
+				if err != nil {
+					log.Printf("[Scheduler] Error in schedule loop: %v", err)
+					break
+				}
+				// If we processed a full batch (or at least some jobs), we try again immediately.
+				// PollAndSchedule returns count. If 0, we are done.
+				if count == 0 {
+					break
+				}
+				// Optional: Check context cancel between bursts
+				if ctx.Err() != nil {
+					break
+				}
 			}
 
 		case <-reconcileTicker.C:
@@ -218,15 +232,16 @@ func (c *Core) RetryFailures(ctx context.Context) error {
 }
 
 // PollAndSchedule fetches due jobs and dispatches them.
-func (c *Core) PollAndSchedule(ctx context.Context) error {
+// Returns the number of jobs scheduled.
+func (c *Core) PollAndSchedule(ctx context.Context) (int, error) {
 	// A. Find jobs that are due (NextRunAt <= Now)
 	jobs, err := c.store.ListDueJobs(ctx, 50) // Batch size 50
 	if err != nil {
-		return fmt.Errorf("failed to list due jobs: %w", err)
+		return 0, fmt.Errorf("failed to list due jobs: %w", err)
 	}
 
 	if len(jobs) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	log.Printf("[Scheduler] Found %d jobs due for execution", len(jobs))
@@ -291,7 +306,24 @@ func (c *Core) PollAndSchedule(ctx context.Context) error {
 		metrics.RecordDispatch(lag)
 	}
 
-	return nil
+	return len(jobs), nil
+}
+
+func (c *Core) updateNextRun(ctx context.Context, job *models.Job, now time.Time) {
+	// C. Calculate Next Run Time
+	schedule, err := c.parser.Parse(job.Schedule)
+	if err != nil {
+		log.Printf("[Scheduler] Invalid cron schedule for job %s: %v", job.ID, err)
+		return
+	}
+
+	nextRun := schedule.Next(now)
+
+	// D. Update Job (Move to future)
+	if err := c.store.UpdateNextRun(ctx, job.ID, nextRun); err != nil {
+		log.Printf("[Scheduler] Failed to update next run for job %s: %v", job.ID, err)
+	}
+	log.Printf("[Scheduler] Updated next run for job %s to %s", job.Name, nextRun)
 }
 
 func (c *Core) updateNextRun(ctx context.Context, job *models.Job, now time.Time) {

@@ -66,7 +66,8 @@ def load_or_train_model():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "skeenode-ai"}
+    status = "healthy" if pipeline.model is not None else "degraded"
+    return {"status": status, "service": "skeenode-ai"}
 
 @app.post("/predict/failure", response_model=PredictionResponse)
 def predict_failure(req: PredictionRequest):

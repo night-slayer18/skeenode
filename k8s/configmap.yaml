@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skeenode-config
+data:
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_USER: "skeenode"
+  DB_NAME: "skeenode"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  ETCD_ENDPOINTS: "etcd:2379"
+  SCHEDULER_INTERVAL: "10s"
+  LEADER_ELECTION_TTL: "15"
+  AI_SERVICE_URL: "http://ai:8000"

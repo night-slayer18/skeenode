@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skeenode-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: skeenode-ai
+  template:
+    metadata:
+      labels:
+        app: skeenode-ai
+    spec:
+      containers:
+      - name: ai
+        image: skeenode/ai:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL_PATH
+          value: "/data/model.joblib"
+        volumeMounts:
+        - name: ai-data
+          mountPath: /data
+      volumes:
+      - name: ai-data
+        persistentVolumeClaim:
+          claimName: ai-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
