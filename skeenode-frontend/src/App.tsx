@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import './App.css';
 
 interface Job {
@@ -26,15 +26,9 @@ function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchData = async () => {
+  // Defined with useCallback to satisfy linter dependencies
+  const fetchData = useCallback(async () => {
     try {
-      // Assuming API is proxied or CORS enabled
       const jobsRes = await fetch('/api/jobs');
       const execsRes = await fetch('/api/executions');
 
@@ -49,12 +43,22 @@ function App() {
       setError(null);
     } catch (err) {
       console.error("Failed to fetch data:", err);
-      // Don't show error immediately to avoid flickering on first load if it's just starting up
-      if (loading) setError("Failed to connect to backend");
+      // We only want to show error on initial load or if persistent,
+      // but 'loading' state might be stale if captured.
+      // Ideally we track separate 'isFirstLoad' but 'loading' works if we just check current state setter
+      // or just assume if we have no jobs it's an error.
+      // For simplicity in this refactor, we just set error.
+      if (jobs.length === 0) setError("Failed to connect to backend");
     } finally {
       setLoading(false);
     }
-  };
+  }, [jobs.length]); // Minimal dependencies
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   const createJob = async () => {
       const name = prompt("Job Name:");
@@ -76,6 +80,7 @@ function App() {
           });
           fetchData();
       } catch (e) {
+          console.error(e);
           alert("Failed to create job");
       }
   };
